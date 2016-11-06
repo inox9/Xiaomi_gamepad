@@ -50,6 +50,16 @@ namespace mi
             }
         }
 
+        private short get_stick_value(byte raw_value, bool x)
+        {
+            short val = (short)((Math.Max(-127.0, raw_value - 128) / 127) * (x ? 32767 : -32767));
+            if (raw_value != (x ? 0 : 255))
+            {
+                val -= 1;
+            }
+            return val;
+        }
+
         private void input_thread(HidDevice Device, ScpBus scpBus, int index)
         {
             scpBus.PlugIn(index);
@@ -103,28 +113,28 @@ namespace mi
                         controller.Buttons = Buttons;
                     }
 
-                    short LeftStickX = (short)((Math.Max(-127.0, currentState[5] - 128) / 127) * 32767);
+                    short LeftStickX = get_stick_value(currentState[5], true);
                     if (LeftStickX != controller.LeftStickX)
                     {
                         changed = true;
                         controller.LeftStickX = LeftStickX;
                     }
 
-                    short LeftStickY = (short)((Math.Max(-127.0, currentState[6] - 128) / 127) * -32767);
+                    short LeftStickY = get_stick_value(currentState[6], false);
                     if (LeftStickY != controller.LeftStickY)
                     {
                         changed = true;
                         controller.LeftStickY = LeftStickY;
                     }
 
-                    short RightStickX = (short)((Math.Max(-127.0, currentState[7] - 128) / 127) * 32767);
+                    short RightStickX = get_stick_value(currentState[7], true);
                     if (RightStickX != controller.RightStickX)
                     {
                         changed = true;
                         controller.RightStickX = RightStickX;
                     }
 
-                    short RightStickY = (short)((Math.Max(-127.0, currentState[8] - 128) / 127) * -32767);
+                    short RightStickY = get_stick_value(currentState[8], false);
                     if (RightStickY != controller.RightStickY)
                     {
                         changed = true;
@@ -224,67 +234,67 @@ namespace mi
 
             Xiaomi_gamepad[] gamepads = new Xiaomi_gamepad[4];
             int index = 1;
-            var compatibleDevices = HidDevices.Enumerate(0x2717, 0x3144).ToList();
-            foreach (var deviceInstance in compatibleDevices)
+            string[] connectedDevices = new string[4];
+            while (true)
             {
-                Console.WriteLine(deviceInstance);
-                HidDevice Device = deviceInstance;
-                try
+                var compatibleDevices = HidDevices.Enumerate(0x2717, 0x3144).ToList();
+                foreach (var deviceInstance in compatibleDevices)
                 {
-                    Device.OpenDevice(DeviceMode.Overlapped, DeviceMode.Overlapped, ShareMode.Exclusive);
-                }
-                catch
-                {
-                    Console.WriteLine("Could not open gamepad in exclusive mode. Try re-enable device.");
-                    var instanceId = devicePathToInstanceId(deviceInstance.DevicePath);
-                    if (TryReEnableDevice(instanceId))
+                    if (index >= 5 || connectedDevices.Contains(deviceInstance.DevicePath))
                     {
-                        try
+                        continue;
+                    }
+
+                    HidDevice Device = deviceInstance;
+                    try
+                    {
+                        Device.OpenDevice(DeviceMode.Overlapped, DeviceMode.Overlapped, ShareMode.Exclusive);
+                    }
+                    catch
+                    {
+                        Console.WriteLine("Could not open gamepad in exclusive mode. Try re-enable device.");
+                        var instanceId = devicePathToInstanceId(deviceInstance.DevicePath);
+                        if (TryReEnableDevice(instanceId))
                         {
-                            Device.OpenDevice(DeviceMode.Overlapped, DeviceMode.Overlapped, ShareMode.Exclusive);
-                            Console.WriteLine("Opened in exclusive mode.");
+                            try
+                            {
+                                Device.OpenDevice(DeviceMode.Overlapped, DeviceMode.Overlapped, ShareMode.Exclusive);
+                                Console.WriteLine("Opened in exclusive mode.");
+                            }
+                            catch
+                            {
+                                Device.OpenDevice(DeviceMode.Overlapped, DeviceMode.Overlapped, ShareMode.ShareRead | ShareMode.ShareWrite);
+                                Console.WriteLine("Opened in shared mode.");
+                            }
                         }
-                        catch
+                        else
                         {
                             Device.OpenDevice(DeviceMode.Overlapped, DeviceMode.Overlapped, ShareMode.ShareRead | ShareMode.ShareWrite);
                             Console.WriteLine("Opened in shared mode.");
                         }
                     }
-                    else
+
+                    byte[] Vibration = { 0x20, 0x00, 0x00 };
+                    if (Device.WriteFeatureData(Vibration) == false)
                     {
-                        Device.OpenDevice(DeviceMode.Overlapped, DeviceMode.Overlapped, ShareMode.ShareRead | ShareMode.ShareWrite);
-                        Console.WriteLine("Opened in shared mode.");
+                        Device.CloseDevice();
+                        continue;
                     }
+
+                    byte[] serialNumber;
+                    byte[] product;
+                    Device.ReadSerialNumber(out serialNumber);
+                    Device.ReadProduct(out product);
+
+                    gamepads[index - 1] = new Xiaomi_gamepad(Device, scpBus, index);
+                    ++index;
+
+                    Console.WriteLine(deviceInstance);
+                    Console.WriteLine("Added new device.");
+                    connectedDevices[index - 1] = deviceInstance.DevicePath;
                 }
 
-                byte[] Vibration = { 0x20, 0x00, 0x00 };
-                if (Device.WriteFeatureData(Vibration) == false)
-                {
-                    Console.WriteLine("Could not write to gamepad (is it closed?), skipping");
-                    Device.CloseDevice();
-                    continue;
-                }
-
-                byte[] serialNumber;
-                byte[] product;
-                Device.ReadSerialNumber(out serialNumber);
-                Device.ReadProduct(out product);
-
-
-                gamepads[index - 1] = new Xiaomi_gamepad(Device, scpBus, index);
-                ++index;
-
-                if (index >= 5)
-                {
-                    break;
-                }
-            }
-
-            Console.WriteLine("{0} controllers connected", index - 1);
-
-            while (true)
-            {
-                Thread.Sleep(1000);
+                Thread.Sleep(5000);
             }
         }
 
